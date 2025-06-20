@@ -3,7 +3,7 @@
 namespace pele::physics::turbforcing {
 void
 TurbForcing::init(amrex::GeometryData const& geomdata)
-{  
+{
 
   // Forcing only in 3D only.
   AMREX_ALWAYS_ASSERT(AMREX_SPACEDIM == 3);
@@ -59,7 +59,7 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
 
   if (m_tfp.m_verbose > 0) {
     amrex::Print() << "================ Init Turbulent Forcing ================"
-            << std::endl;
+                   << std::endl;
     amrex::Print() << "Lx = " << Lx << std::endl;
     amrex::Print() << "Ly = " << Ly << std::endl;
     amrex::Print() << "Lz = " << Lz << std::endl;
@@ -82,7 +82,8 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
     m_tfp.m_fts_max * (m_tfp.m_fvr / m_tfp.m_flr) * (Lx / m_tfp.m_urms);
 
   m_tfp.m_Lmin = std::min(Lx, std::min(Ly, Lz));
-  m_tfp.m_kappaMax = static_cast<amrex::Real>(m_tfp.m_nmodes) / m_tfp.m_Lmin + 1.0e-8;
+  m_tfp.m_kappaMax =
+    static_cast<amrex::Real>(m_tfp.m_nmodes) / m_tfp.m_Lmin + 1.0e-8;
   m_tfp.m_nxmodes = m_tfp.m_nmodes * (int)(0.5 + Lx / m_tfp.m_Lmin);
   m_tfp.m_nymodes = m_tfp.m_nmodes * (int)(0.5 + Ly / m_tfp.m_Lmin);
   m_tfp.m_nzmodes = m_tfp.m_nmodes * (int)(0.5 + Lz / m_tfp.m_Lmin);
@@ -101,10 +102,10 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
 
   if (m_tfp.m_verbose > 0) {
     amrex::Print() << "force_scale = " << m_tfp.m_force_scale << "\n";
-    amrex::Print() << "forcing_time_scale_min = " << m_tfp.m_forcing_time_scale_min
-            << std::endl;
-    amrex::Print() << "forcing_time_scale_max = " << m_tfp.m_forcing_time_scale_max
-            << std::endl;
+    amrex::Print() << "forcing_time_scale_min = "
+                   << m_tfp.m_forcing_time_scale_min << std::endl;
+    amrex::Print() << "forcing_time_scale_max = "
+                   << m_tfp.m_forcing_time_scale_max << std::endl;
     amrex::Print() << "freqMin = " << m_tfp.m_freqMin << std::endl;
     amrex::Print() << "freqMax = " << m_tfp.m_freqMax << std::endl;
     amrex::Print() << "freqDiff = " << m_tfp.m_freqDiff << std::endl;
@@ -169,7 +170,7 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
 
   if (m_tfp.m_verbose) {
     amrex::Print() << "Mode step = " << xstep << " " << ystep << " " << zstep
-            << std::endl;
+                   << std::endl;
   }
 
   for (int kz = m_tfp.m_mode_start * zstep; kz <= m_tfp.m_nzmodes;
@@ -224,8 +225,8 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
           const amrex::Real mp2 = px * px + py * py + pz * pz;
           if (kappa < 0.000001) {
             if (m_tfp.m_verbose > 0) {
-	      amrex::Print() << "   ZERO AMPLITUDE MODE " << kx << ky << kz
-                      << std::endl;
+              amrex::Print()
+                << "   ZERO AMPLITUDE MODE " << kx << ky << kz << std::endl;
             }
             FAX(kx, ky, kz) = 0.;
             FAY(kx, ky, kz) = 0.;
@@ -264,28 +265,28 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
             }
 
             if (m_tfp.m_verbose > 1) {
-	      amrex::Print() << "   Mode";
-              amrex::Print() << "   kappa = " << kx << " " << ky << " " << kz << " "
-                      << kappa << " "
-                      << sqrt(
-                           FAX(kx, ky, kz) * FAX(kx, ky, kz) +
-                           FAY(kx, ky, kz) * FAY(kx, ky, kz) +
-                           FAZ(kx, ky, kz) * FAZ(kx, ky, kz))
-                      << std::endl;
+              amrex::Print() << "   Mode";
+              amrex::Print() << "   kappa = " << kx << " " << ky << " " << kz
+                             << " " << kappa << " "
+                             << sqrt(
+                                  FAX(kx, ky, kz) * FAX(kx, ky, kz) +
+                                  FAY(kx, ky, kz) * FAY(kx, ky, kz) +
+                                  FAZ(kx, ky, kz) * FAZ(kx, ky, kz))
+                             << std::endl;
               amrex::Print() << "   Amplitudes - A" << std::endl;
               amrex::Print() << FAX(kx, ky, kz) << " " << FAY(kx, ky, kz) << " "
-                      << FAZ(kx, ky, kz) << std::endl;
+                             << FAZ(kx, ky, kz) << std::endl;
               amrex::Print() << "   Frequencies" << std::endl;
               amrex::Print() << FTX(kx, ky, kz) << std::endl;
               amrex::Print() << "   TAT" << std::endl;
               amrex::Print() << TAT(kx, ky, kz) << std::endl;
               amrex::Print() << "   Amplitudes - AA" << std::endl;
-              amrex::Print() << FPXX(kx, ky, kz) << " " << FPYX(kx, ky, kz) << " "
-                      << FPZX(kx, ky, kz) << std::endl;
-              amrex::Print() << FPXY(kx, ky, kz) << " " << FPYY(kx, ky, kz) << " "
-                      << FPZY(kx, ky, kz) << std::endl;
-              amrex::Print() << FPXZ(kx, ky, kz) << " " << FPYZ(kx, ky, kz) << " "
-                      << FPZZ(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXX(kx, ky, kz) << " " << FPYX(kx, ky, kz)
+                             << " " << FPZX(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXY(kx, ky, kz) << " " << FPYY(kx, ky, kz)
+                             << " " << FPZY(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXZ(kx, ky, kz) << " " << FPYZ(kx, ky, kz)
+                             << " " << FPZZ(kx, ky, kz) << std::endl;
             }
           }
         }
@@ -345,8 +346,8 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
           const amrex::Real mp2 = px * px + py * py + pz * pz;
           if (kappa < 0.000001) {
             if (m_tfp.m_verbose > 0) {
-              amrex::Print() << "   ZERO AMPLITUDE MODE " << kx << ky << kz
-                      << std::endl;
+              amrex::Print()
+                << "   ZERO AMPLITUDE MODE " << kx << ky << kz << std::endl;
             }
             FAX(kx, ky, kz) = 0.;
             FAY(kx, ky, kz) = 0.;
@@ -389,27 +390,27 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
 
             if (m_tfp.m_verbose > 1) {
               amrex::Print() << "   Mode";
-              amrex::Print() << "   kappa = " << kx << " " << ky << " " << kz << " "
-                      << kappa << " "
-			     << std::sqrt(
-                           FAX(kx, ky, kz) * FAX(kx, ky, kz) +
-                           FAY(kx, ky, kz) * FAY(kx, ky, kz) +
-                           FAZ(kx, ky, kz) * FAZ(kx, ky, kz))
-                      << std::endl;
+              amrex::Print() << "   kappa = " << kx << " " << ky << " " << kz
+                             << " " << kappa << " "
+                             << std::sqrt(
+                                  FAX(kx, ky, kz) * FAX(kx, ky, kz) +
+                                  FAY(kx, ky, kz) * FAY(kx, ky, kz) +
+                                  FAZ(kx, ky, kz) * FAZ(kx, ky, kz))
+                             << std::endl;
               amrex::Print() << "   Amplitudes - A" << std::endl;
               amrex::Print() << FAX(kx, ky, kz) << " " << FAY(kx, ky, kz) << " "
-                      << FAZ(kx, ky, kz) << std::endl;
+                             << FAZ(kx, ky, kz) << std::endl;
               amrex::Print() << "   Frequencies" << std::endl;
               amrex::Print() << FTX(kx, ky, kz) << std::endl;
               amrex::Print() << "   TAT" << std::endl;
               amrex::Print() << TAT(kx, ky, kz) << std::endl;
               amrex::Print() << "   Amplitudes - AA" << std::endl;
-              amrex::Print() << FPXX(kx, ky, kz) << " " << FPYX(kx, ky, kz) << " "
-                      << FPZX(kx, ky, kz) << std::endl;
-              amrex::Print() << FPXY(kx, ky, kz) << " " << FPYY(kx, ky, kz) << " "
-                      << FPZY(kx, ky, kz) << std::endl;
-              amrex::Print() << FPXZ(kx, ky, kz) << " " << FPYZ(kx, ky, kz) << " "
-                      << FPZZ(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXX(kx, ky, kz) << " " << FPYX(kx, ky, kz)
+                             << " " << FPZX(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXY(kx, ky, kz) << " " << FPYY(kx, ky, kz)
+                             << " " << FPZY(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXZ(kx, ky, kz) << " " << FPYZ(kx, ky, kz)
+                             << " " << FPZZ(kx, ky, kz) << std::endl;
             }
           }
         }
@@ -419,7 +420,8 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
 
   if (m_tfp.m_verbose > 0) {
     amrex::Print() << "mode_count = " << mode_count << std::endl;
-    amrex::Print() << "reduced_mode_count = " << reduced_mode_count << std::endl;
+    amrex::Print() << "reduced_mode_count = " << reduced_mode_count
+                   << std::endl;
     if (m_tfp.m_spectrum_type == 1) {
       amrex::Print() << "Spectrum type 1" << std::endl;
     } else if (m_tfp.m_spectrum_type == 2) {
@@ -432,8 +434,8 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
   // Now allocate forcedata and copy in tmp array.
 #ifdef AMREX_USE_GPU
   if (amrex::Gpu::inLaunchRegion()) {
-    m_tfp.m_forcedata =
-      static_cast<amrex::Real*>(amrex::The_Arena()->alloc(tmp_buffer_size * sizeof(amrex::Real)));
+    m_tfp.m_forcedata = static_cast<amrex::Real*>(
+      amrex::The_Arena()->alloc(tmp_buffer_size * sizeof(amrex::Real)));
     amrex::Gpu::htod_memcpy_async(
       m_tfp.m_forcedata, tmp_buffer, tmp_buffer_size * sizeof(amrex::Real));
   } else
@@ -441,12 +443,13 @@ TurbForcing::init(amrex::GeometryData const& geomdata)
   {
     m_tfp.m_forcedata = static_cast<amrex::Real*>(
       amrex::The_Pinned_Arena()->alloc(tmp_buffer_size * sizeof(amrex::Real)));
-    std::memcpy(m_tfp.m_forcedata, tmp_buffer, tmp_buffer_size * sizeof(amrex::Real));
+    std::memcpy(
+      m_tfp.m_forcedata, tmp_buffer, tmp_buffer_size * sizeof(amrex::Real));
   }
 
   if (m_tfp.m_verbose > 0) {
     amrex::Print() << "========================================================"
-            << std::endl;
+                   << std::endl;
   }
   m_turbforcing_initialized = true;
 }
@@ -461,7 +464,7 @@ TurbForcing::addTurbVelForces(
   const int a_incompressible)
 {
   AMREX_ALWAYS_ASSERT(m_turbforcing_initialized);
-  
+
   if (a_incompressible != 0 && m_tfp.m_rho_incompressible <= 0.0) {
     amrex::Abort("turbforce.rho_incompressible must be greater than 0 when "
                  "incompressible\n");
@@ -594,119 +597,121 @@ TurbForcing::addTurbVelForces(
   }
 
   // allocate coarse force array
-  amrex::Box ffbx(amrex::IntVect(AMREX_D_DECL(ff_ilo, ff_jlo, ff_klo)),
-		  amrex::IntVect(AMREX_D_DECL(ff_ihi, ff_jhi, ff_khi)));
+  amrex::Box ffbx(
+    amrex::IntVect(AMREX_D_DECL(ff_ilo, ff_jlo, ff_klo)),
+    amrex::IntVect(AMREX_D_DECL(ff_ihi, ff_jhi, ff_khi)));
   // not sure if want elixir, gpu::sync, or async_arena here...
   amrex::FArrayBox ff_force(ffbx, AMREX_SPACEDIM);
   const auto& ffarr = ff_force.array();
 
   // Construct node-based coarse forcing
-  amrex::ParallelFor(ffbx, [=,mode_start = m_tfp.m_mode_start,nmodes=m_tfp.m_nmodes] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-    amrex::Real z = xlo[2] + ff_hz * (k - ff_klo);
-    amrex::Real y = xlo[1] + ff_hy * (j - ff_jlo);
-    amrex::Real x = xlo[0] + ff_hx * (i - ff_ilo);
+  amrex::ParallelFor(
+    ffbx,
+    [=, mode_start = m_tfp.m_mode_start,
+     nmodes = m_tfp.m_nmodes] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+      amrex::Real z = xlo[2] + ff_hz * (k - ff_klo);
+      amrex::Real y = xlo[1] + ff_hy * (j - ff_jlo);
+      amrex::Real x = xlo[0] + ff_hx * (i - ff_ilo);
 
-    for (int n = 0; n < AMREX_SPACEDIM; ++n) {
-      ffarr(i, j, k, n) = 0.0;
-    }
+      for (int n = 0; n < AMREX_SPACEDIM; ++n) {
+        ffarr(i, j, k, n) = 0.0;
+      }
 
-    // forcedata (and Array4) has column-major layout
-    for (int kz = mode_start * zstep; kz <= nmodes * zstep;
-         kz += zstep) {
-      for (int ky = mode_start * ystep; ky <= nmodes * ystep;
-           ky += ystep) {
-        for (int kx = mode_start * xstep; kx <= nmodes * xstep;
-             kx += xstep) {
-          const amrex::Real kappa = std::sqrt(
-            (kx * kx) / (Lx * Lx) + (ky * ky) / (Ly * Ly) +
-            (kz * kz) / (Lz * Lz));
+      // forcedata (and Array4) has column-major layout
+      for (int kz = mode_start * zstep; kz <= nmodes * zstep; kz += zstep) {
+        for (int ky = mode_start * ystep; ky <= nmodes * ystep; ky += ystep) {
+          for (int kx = mode_start * xstep; kx <= nmodes * xstep; kx += xstep) {
+            const amrex::Real kappa = std::sqrt(
+              (kx * kx) / (Lx * Lx) + (ky * ky) / (Ly * Ly) +
+              (kz * kz) / (Lz * Lz));
 
-          if (kappa <= kappaMax) {
-            const amrex::Real xT = cos(FTX(kx, ky, kz) * forcetime + TAT(kx, ky, kz));
+            if (kappa <= kappaMax) {
+              const amrex::Real xT =
+                cos(FTX(kx, ky, kz) * forcetime + TAT(kx, ky, kz));
 
-            ffarr(i, j, k, 0) +=
-              xT * (FAZ(kx, ky, kz) * TwoPi * (ky / Ly) *
-                      sin(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
-                      cos(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
-                      sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)) -
-                    FAY(kx, ky, kz) * TwoPi * (kz / Lz) *
-                      sin(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
-                      sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
-                      cos(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)));
+              ffarr(i, j, k, 0) +=
+                xT * (FAZ(kx, ky, kz) * TwoPi * (ky / Ly) *
+                        sin(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
+                        cos(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
+                        sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)) -
+                      FAY(kx, ky, kz) * TwoPi * (kz / Lz) *
+                        sin(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
+                        sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
+                        cos(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)));
 
-            ffarr(i, j, k, 1) +=
-              xT * (FAX(kx, ky, kz) * TwoPi * (kz / Lz) *
-                      sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
-                      sin(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
-                      cos(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)) -
-                    FAZ(kx, ky, kz) * TwoPi * (kx / Lx) *
-                      cos(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
-                      sin(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
-                      sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)));
+              ffarr(i, j, k, 1) +=
+                xT * (FAX(kx, ky, kz) * TwoPi * (kz / Lz) *
+                        sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
+                        sin(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
+                        cos(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)) -
+                      FAZ(kx, ky, kz) * TwoPi * (kx / Lx) *
+                        cos(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
+                        sin(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
+                        sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)));
 
-            ffarr(i, j, k, 2) +=
-              xT * (FAY(kx, ky, kz) * TwoPi * (kx / Lx) *
-                      cos(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
-                      sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
-                      sin(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)) -
-                    FAX(kx, ky, kz) * TwoPi * (ky / Ly) *
-                      sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
-                      cos(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
-                      sin(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)));
+              ffarr(i, j, k, 2) +=
+                xT * (FAY(kx, ky, kz) * TwoPi * (kx / Lx) *
+                        cos(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
+                        sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
+                        sin(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)) -
+                      FAX(kx, ky, kz) * TwoPi * (ky / Ly) *
+                        sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
+                        cos(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
+                        sin(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)));
+            }
           }
         }
       }
-    }
 
-    //
-    // For high aspect ratio domain, add more modes to break symmetry at a low
-    // level. We assume Lz is longer, Lx = Ly.
-    //
-    for (int kz = 1; kz <= zstep - 1; ++kz) {
-      for (int ky = mode_start; ky <= nmodes * ystep; ++ky) {
-        for (int kx = mode_start; kx <= nmodes * xstep; ++kx) {
-          const amrex::Real kappa = std::sqrt(
-            (kx * kx) / (Lx * Lx) + (ky * ky) / (Ly * Ly) +
-            (kz * kz) / (Lz * Lz));
+      //
+      // For high aspect ratio domain, add more modes to break symmetry at a low
+      // level. We assume Lz is longer, Lx = Ly.
+      //
+      for (int kz = 1; kz <= zstep - 1; ++kz) {
+        for (int ky = mode_start; ky <= nmodes * ystep; ++ky) {
+          for (int kx = mode_start; kx <= nmodes * xstep; ++kx) {
+            const amrex::Real kappa = std::sqrt(
+              (kx * kx) / (Lx * Lx) + (ky * ky) / (Ly * Ly) +
+              (kz * kz) / (Lz * Lz));
 
-          if (kappa <= kappaMax) {
-            const amrex::Real xT =
-              cos(FTX(kx, ky, kz) * forcetime + TAT(kx, ky, kz));
+            if (kappa <= kappaMax) {
+              const amrex::Real xT =
+                cos(FTX(kx, ky, kz) * forcetime + TAT(kx, ky, kz));
 
-            ffarr(i, j, k, 0) +=
-              xT * (FAZ(kx, ky, kz) * TwoPi * (ky / Ly) *
-                      sin(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
-                      cos(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
-                      sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)) -
-                    FAY(kx, ky, kz) * TwoPi * (kz / Lz) *
-                      sin(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
-                      sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
-                      cos(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)));
+              ffarr(i, j, k, 0) +=
+                xT * (FAZ(kx, ky, kz) * TwoPi * (ky / Ly) *
+                        sin(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
+                        cos(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
+                        sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)) -
+                      FAY(kx, ky, kz) * TwoPi * (kz / Lz) *
+                        sin(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
+                        sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
+                        cos(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)));
 
-            ffarr(i, j, k, 1) +=
-              xT * (FAX(kx, ky, kz) * TwoPi * (kz / Lz) *
-                      sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
-                      sin(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
-                      cos(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)) -
-                    FAZ(kx, ky, kz) * TwoPi * (kx / Lx) *
-                      cos(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
-                      sin(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
-                      sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)));
+              ffarr(i, j, k, 1) +=
+                xT * (FAX(kx, ky, kz) * TwoPi * (kz / Lz) *
+                        sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
+                        sin(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
+                        cos(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)) -
+                      FAZ(kx, ky, kz) * TwoPi * (kx / Lx) *
+                        cos(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
+                        sin(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
+                        sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)));
 
-            ffarr(i, j, k, 2) +=
-              xT * (FAY(kx, ky, kz) * TwoPi * (kx / Lx) *
-                      cos(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
-                      sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
-                      sin(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)) -
-                    FAX(kx, ky, kz) * TwoPi * (ky / Ly) *
-                      sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
-                      cos(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
-                      sin(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)));
+              ffarr(i, j, k, 2) +=
+                xT * (FAY(kx, ky, kz) * TwoPi * (kx / Lx) *
+                        cos(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
+                        sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
+                        sin(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)) -
+                      FAX(kx, ky, kz) * TwoPi * (ky / Ly) *
+                        sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
+                        cos(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
+                        sin(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)));
+            }
           }
         }
       }
-    }
-  });
+    });
 
   // Need all of ffarr filled for next lambda
   amrex::Gpu::synchronize();
@@ -715,7 +720,8 @@ TurbForcing::addTurbVelForces(
   if (a_incompressible == 0) {
     amrex::ParallelFor(
       bx, AMREX_SPACEDIM,
-      [=,ff_factor = m_tfp.m_ff_factor] AMREX_GPU_DEVICE(int i, int j, int k, int n) noexcept {
+      [=, ff_factor = m_tfp.m_ff_factor] AMREX_GPU_DEVICE(
+        int i, int j, int k, int n) noexcept {
         const int ff_k = k / ff_factor;
         const int ff_j = j / ff_factor;
         const int ff_i = i / ff_factor;
@@ -743,33 +749,36 @@ TurbForcing::addTurbVelForces(
       });
   } else {
     amrex::ParallelFor(
-		       bx, AMREX_SPACEDIM,
-		       [=,ff_factor = m_tfp.m_ff_factor,rho = m_tfp.m_rho_incompressible] AMREX_GPU_DEVICE(int i, int j, int k, int n) noexcept {
-			 const int ff_k = k / ff_factor;
-			 const int ff_j = j / ff_factor;
-			 const int ff_i = i / ff_factor;
-			 
-			 const amrex::Real zd =
-			   (hz * (k - klo + 0.5) - ff_hz * (ff_k - ff_klo)) / ff_hz;
-			 const amrex::Real yd =
-			   (hy * (j - jlo + 0.5) - ff_hy * (ff_j - ff_jlo)) / ff_hy;
-			 const amrex::Real xd =
-			   (hx * (i - ilo + 0.5) - ff_hx * (ff_i - ff_ilo)) / ff_hx;
-			 
-			 const amrex::Real ff00 = ffarr(ff_i, ff_j, ff_k, n) * (1. - xd) +
-			   ffarr(ff_i + 1, ff_j, ff_k, n) * xd;
-			 const amrex::Real ff01 = ffarr(ff_i, ff_j, ff_k + 1, n) * (1. - xd) +
-			   ffarr(ff_i + 1, ff_j, ff_k + 1, n) * xd;
-			 const amrex::Real ff10 = ffarr(ff_i, ff_j + 1, ff_k, n) * (1. - xd) +
-			   ffarr(ff_i + 1, ff_j + 1, ff_k, n) * xd;
-			 const amrex::Real ff11 =
-			   ffarr(ff_i, ff_j + 1, ff_k + 1, n) * (1. - xd) +
-			   ffarr(ff_i + 1, ff_j + 1, ff_k + 1, n) * xd;
-			 
-			 const amrex::Real ff = (ff00 * (1. - yd) + ff10 * yd) * (1. - zd) +
-			   (ff01 * (1. - yd) + ff11 * yd) * zd;
-			 
-			 force(i, j, k, n) += rho * ff;
+      bx, AMREX_SPACEDIM,
+      [=, ff_factor = m_tfp.m_ff_factor,
+       rho =
+         m_tfp
+           .m_rho_incompressible] AMREX_GPU_DEVICE(int i, int j, int k, int n) noexcept {
+        const int ff_k = k / ff_factor;
+        const int ff_j = j / ff_factor;
+        const int ff_i = i / ff_factor;
+
+        const amrex::Real zd =
+          (hz * (k - klo + 0.5) - ff_hz * (ff_k - ff_klo)) / ff_hz;
+        const amrex::Real yd =
+          (hy * (j - jlo + 0.5) - ff_hy * (ff_j - ff_jlo)) / ff_hy;
+        const amrex::Real xd =
+          (hx * (i - ilo + 0.5) - ff_hx * (ff_i - ff_ilo)) / ff_hx;
+
+        const amrex::Real ff00 = ffarr(ff_i, ff_j, ff_k, n) * (1. - xd) +
+                                 ffarr(ff_i + 1, ff_j, ff_k, n) * xd;
+        const amrex::Real ff01 = ffarr(ff_i, ff_j, ff_k + 1, n) * (1. - xd) +
+                                 ffarr(ff_i + 1, ff_j, ff_k + 1, n) * xd;
+        const amrex::Real ff10 = ffarr(ff_i, ff_j + 1, ff_k, n) * (1. - xd) +
+                                 ffarr(ff_i + 1, ff_j + 1, ff_k, n) * xd;
+        const amrex::Real ff11 =
+          ffarr(ff_i, ff_j + 1, ff_k + 1, n) * (1. - xd) +
+          ffarr(ff_i + 1, ff_j + 1, ff_k + 1, n) * xd;
+
+        const amrex::Real ff = (ff00 * (1. - yd) + ff10 * yd) * (1. - zd) +
+                               (ff01 * (1. - yd) + ff11 * yd) * zd;
+
+        force(i, j, k, n) += rho * ff;
       });
   }
 }
