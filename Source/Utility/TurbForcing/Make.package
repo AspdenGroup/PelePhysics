@@ -1,5 +1,5 @@
-CEXE_headers += turbforcing.H depRand.H
-CEXE_sources += turbforcing.cpp depRand.cpp
+CEXE_headers += turbforcing.H mersenneTwister.H
+CEXE_sources += turbforcing.cpp mersenneTwister.cpp
 
 VPATH_LOCATIONS += $(PELE_PHYSICS_HOME)/Source/Utility/TurbForcing
 INCLUDE_LOCATIONS += $(PELE_PHYSICS_HOME)/Source/Utility/TurbForcing

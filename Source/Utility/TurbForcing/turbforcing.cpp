@@ -3,859 +3,775 @@
 namespace pele::physics::turbforcing {
 void
 TurbForcing::init(amrex::GeometryData const& geomdata)
-{
-  // Start with checks.
-  // This is for 3D only.
-  AMREX_ALWAYS_ASSERT(AMREX_SPACEDIM==3);
+{  
 
-  // Forcing requires that Lx==Ly, Lz can be longer
-  amrex::Real Lx = probhi[0]-problo[0];
-  amrex::Real Ly = probhi[1]-problo[1];
-  amrex::Real Lz = probhi[2]-problo[2];
-  AMREX_ALWAYS_ASSERT(Lx==Ly);
+  // Forcing only in 3D only.
+  AMREX_ALWAYS_ASSERT(AMREX_SPACEDIM == 3);
 
-  
   const amrex::Real* problo = geomdata.ProbLo();
   const amrex::Real* probhi = geomdata.ProbHi();
 
-  constexpr amrex::Real Pi = M_PI;
-  constexpr amrex::Real TwoPi = 2.*Pi;
-  
-  // Read in parameters
-  amrex::ParmParse pp("turbforce");
+  constexpr amrex::Real Pi = 3.14159265358979323846264338327950288;
+  constexpr amrex::Real TwoPi = 2.0 * Pi;
 
-  pp.query("v", tfp.verbose);        
-  // first mode to force
-  pp.query("mode_start", tfp.mode_start);
-  // largest mode to force
-  pp.query("nmodes", tfp.nmodes);
-  // fast force coarsening factor
-  pp.query("ff_factor", tfp.ff_factor);
+  const amrex::Real Lx = probhi[0] - problo[0];
+  const amrex::Real Ly = probhi[1] - problo[1];
+  amrex::Real Lz = probhi[2] - problo[2];
+  AMREX_ALWAYS_ASSERT(
+    Lx == Ly); // Forcing requires that Lx==Ly, Lz can be longer
+
+  // parse in variables
+  amrex::ParmParse pp("turbforce");
+  pp.query("v", m_tfp.m_verbose);
   // fine scale tuning of the forcing
-  pp.query("force_scale_fudge", tfp.force_scale_fudge);
-  // reduce amplitude of modes used for breaking symmetry
-  pp.query("forcing_epsilon", tfp.forcing_epsilon);
+  pp.query("force_scale_fudge", m_tfp.m_force_scale_fudge);
   // target velocity fluctuation
-  pp.get("urms",tfp.urms);
-  // shape the spectrum of the forcing
-  pp.query("spectrum_type",tfp.spectrum_type);
-  // reduce the impact of any zero mode 
-  pp.query("moderate_zero_modes",tfp.moderate_zero_modes);
+  pp.get("urms", m_tfp.m_urms);
   // time offset (e.g. for starting from precursor turb sim)
-  pp.query("time_offset",tfp.time_offset);  
+  pp.query("time_offset", m_tfp.m_time_offset);
   // allow peridodic reproduction in z
   // can be used as a flag i.e. =1 for a factor 2
   // or as the factor itself
-  pp.query("hack_lz",tfp.hack_lz);
-  
-  if (tfp.hack_lz>0) {
-    if (tfp.hack_lz==1) {
-      Lz = Lz/2.0;
+  pp.query("hack_lz", m_tfp.m_hack_lz);
+
+  pp.query("rho_incompressible", m_tfp.m_rho_incompressible);
+
+  // Tuned by Andrew Aspden, change at own risk!
+  // fast force coarsening factor
+  pp.query("ff_factor", m_tfp.m_ff_factor);
+  // largest mode to force
+  pp.query("nmodes", m_tfp.m_nmodes);
+  // reduce amplitude of modes used for breaking symmetry
+  pp.query("forcing_epsilon", m_tfp.m_forcing_epsilon);
+  // shape the spectrum of the forcing
+  pp.query("spectrum_type", m_tfp.m_spectrum_type);
+  // reduce the impact of any zero mode
+  pp.query("moderate_zero_modes", m_tfp.m_moderate_zero_modes);
+  pp.query("mode_start", m_tfp.m_mode_start);
+
+  if (m_tfp.m_hack_lz > 0) {
+    if (m_tfp.m_hack_lz == 1) {
+      Lz = Lz / 2.0;
     } else {
-      Lz = Lz/tfp.hack_lz;
+      Lz = Lz / m_tfp.m_hack_lz;
     }
   }
-  
-  if (tfp.verbose)
-    {
-      Print() << "Lx = " << Lx << std::endl;
-      Print() << "Ly = " << Ly << std::endl;
-      Print() << "Lz = " << Lz << std::endl;
-    }
-  
+
+  if (m_tfp.m_verbose > 0) {
+    amrex::Print() << "================ Init Turbulent Forcing ================"
+            << std::endl;
+    amrex::Print() << "Lx = " << Lx << std::endl;
+    amrex::Print() << "Ly = " << Ly << std::endl;
+    amrex::Print() << "Lz = " << Lz << std::endl;
+  }
+
   //
   // calculate turbulent forcing scales (using AJA's reference values)
   //
-  if (Lx == Lz) { 
-    tfp.fsr = 1.47e7; // cubic reference value
-  } else {          
-    tfp.fsr = 1.41e7; // non-cubic reference value
+  if (Lx == Lz) {
+    m_tfp.m_fsr = 1.47e7; // cubic reference value
+  } else {
+    m_tfp.m_fsr = 1.41e7; // non-cubic reference value
   }
-  tfp.force_scale = tfp.force_scale_fudge * tfp.fsr * pow(tfp.urms / tfp.fvr,2) * pow(tfp.flr/Lx,3);
-  tfp.forcing_time_scale_min = tfp.fts_min * (tfp.fvr/tfp.flr) * (Lx/urms);
-  tfp.forcing_time_scale_max = tfp.fts_max * (tfp.fvr/tfp.flr) * (Lx/urms);
-  
-  tfp.Lmin = std::min(Lx,std::min(Ly,Lz));
-  tfp.kappaMax = ((Real)tfp.nmodes)/tfp.Lmin + 1.0e-8;
-  tfp.nxmodes = tfp.nmodes*(int)(0.5+Lx/tfp.Lmin);
-  tfp.nymodes = tfp.nmodes*(int)(0.5+Ly/tfp.Lmin);
-  tfp.nzmodes = tfp.nmodes*(int)(0.5+Lz/tfp.Lmin);
-  
-  if (tfp.verbose) {
-    Print() << "Lmin = " << tfp.Lmin << std::endl;
-    Print() << "kappaMax = " << tfp.kappaMax << std::endl;
-    Print() << "nxmodes = " << tfp.nxmodes << std::endl;
-    Print() << "nymodes = " << tfp.nxmodes << std::endl;
-    Print() << "nzmodes = " << tfp.nxmodes << std::endl;
+  m_tfp.m_force_scale = m_tfp.m_force_scale_fudge * m_tfp.m_fsr *
+                        pow(m_tfp.m_urms / m_tfp.m_fvr, 2) *
+                        pow(m_tfp.m_flr / Lx, 3);
+  m_tfp.m_forcing_time_scale_min =
+    m_tfp.m_fts_min * (m_tfp.m_fvr / m_tfp.m_flr) * (Lx / m_tfp.m_urms);
+  m_tfp.m_forcing_time_scale_max =
+    m_tfp.m_fts_max * (m_tfp.m_fvr / m_tfp.m_flr) * (Lx / m_tfp.m_urms);
+
+  m_tfp.m_Lmin = std::min(Lx, std::min(Ly, Lz));
+  m_tfp.m_kappaMax = static_cast<amrex::Real>(m_tfp.m_nmodes) / m_tfp.m_Lmin + 1.0e-8;
+  m_tfp.m_nxmodes = m_tfp.m_nmodes * (int)(0.5 + Lx / m_tfp.m_Lmin);
+  m_tfp.m_nymodes = m_tfp.m_nmodes * (int)(0.5 + Ly / m_tfp.m_Lmin);
+  m_tfp.m_nzmodes = m_tfp.m_nmodes * (int)(0.5 + Lz / m_tfp.m_Lmin);
+
+  if (m_tfp.m_verbose > 0) {
+    amrex::Print() << "Lmin = " << m_tfp.m_Lmin << std::endl;
+    amrex::Print() << "kappaMax = " << m_tfp.m_kappaMax << std::endl;
+    amrex::Print() << "nxmodes = " << m_tfp.m_nxmodes << std::endl;
+    amrex::Print() << "nymodes = " << m_tfp.m_nymodes << std::endl;
+    amrex::Print() << "nzmodes = " << m_tfp.m_nzmodes << std::endl;
   }
-  
-  tfp.freqMin = 1.0/tfp.forcing_time_scale_max;
-  tfp.freqMax = 1.0/tfp.forcing_time_scale_min;
-  tfp.freqDiff= tfp.freqMax-tfp.freqMin;
-  
-  if (tfp.verbose) {
-    Print() << "force_scale = " << tfp.force_scale << "\n";
-    Print() << "forcing_time_scale_min = " << tfp.forcing_time_scale_min << std::endl;
-    Print() << "forcing_time_scale_max = " << tfp.forcing_time_scale_max << std::endl;
-    Print() << "freqMin = " << tfp.freqMin << std::endl;
-    Print() << "freqMax = " << tfp.freqMax << std::endl;
-    Print() << "freqDiff = " << tfp.freqDiff << std::endl;
+
+  m_tfp.m_freqMin = 1.0 / m_tfp.m_forcing_time_scale_max;
+  m_tfp.m_freqMax = 1.0 / m_tfp.m_forcing_time_scale_min;
+  m_tfp.m_freqDiff = m_tfp.m_freqMax - m_tfp.m_freqMin;
+
+  if (m_tfp.m_verbose > 0) {
+    amrex::Print() << "force_scale = " << m_tfp.m_force_scale << "\n";
+    amrex::Print() << "forcing_time_scale_min = " << m_tfp.m_forcing_time_scale_min
+            << std::endl;
+    amrex::Print() << "forcing_time_scale_max = " << m_tfp.m_forcing_time_scale_max
+            << std::endl;
+    amrex::Print() << "freqMin = " << m_tfp.m_freqMin << std::endl;
+    amrex::Print() << "freqMax = " << m_tfp.m_freqMax << std::endl;
+    amrex::Print() << "freqDiff = " << m_tfp.m_freqDiff << std::endl;
   }
-  
+
   // tmp CPU storage that holds everything in one flat array
-  constexpr int num_elmts = array_size*array_size*array_size;
-  constexpr int tmp_size  = num_fdarray*num_elmts;
-  amrex::Real tmp[tmp_size];
-  
+  constexpr int num_elmts =
+    m_tfp.m_array_size * m_tfp.m_array_size * m_tfp.m_array_size;
+  constexpr int tmp_buffer_size = m_tfp.m_num_fdarray * num_elmts;
+  amrex::Real tmp_buffer[tmp_buffer_size];
+
   // Separate out forcing data into individual Array4's
   int i_arr = 0;
   constexpr int fd_ncomp = 1;
-  amrex::Dim3 fd_begin{0,0,0};
-  amrex::Dim3 fd_end{array_size,array_size,array_size};
-  
-  Array4<Real> FTX(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> TAT(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPX(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPY(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPZ(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FAX(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FAY(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FAZ(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPXX(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPXY(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPXZ(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPYX(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPYY(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPYZ(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPZX(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPZY(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  Array4<Real> FPZZ(&tmp[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-  
+  constexpr amrex::Dim3 fd_begin{0, 0, 0};
+  constexpr amrex::Dim3 fd_end{
+    m_tfp.m_array_size, m_tfp.m_array_size, m_tfp.m_array_size};
+
+  amrex::Array4<amrex::Real> FTX(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> TAT(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPX(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPY(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPZ(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FAX(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FAY(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FAZ(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPXX(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPXY(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPXZ(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPYX(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPYY(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPYZ(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPZX(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPZY(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPZZ(
+    &tmp_buffer[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+
   // initiate the magic
-  DepRand::InitRandom((unsigned long)111397);
-  
+  mersenne_twister::InitRandom((unsigned long)111397);
+
   int mode_count = 0;
-  
-  const int xstep = (int)(Lx/tfp.Lmin+0.5);
-  const int ystep = (int)(Ly/tfp.Lmin+0.5);
-  const int zstep = (int)(Lz/tfp.Lmin+0.5);
-  
-  if (tfp.verbose) {
-    Print() << "Mode step = " << xstep << " " << ystep << " " << zstep << std::endl;
+
+  const int xstep = (int)(Lx / m_tfp.m_Lmin + 0.5);
+  const int ystep = (int)(Ly / m_tfp.m_Lmin + 0.5);
+  const int zstep = (int)(Lz / m_tfp.m_Lmin + 0.5);
+
+  if (m_tfp.m_verbose) {
+    amrex::Print() << "Mode step = " << xstep << " " << ystep << " " << zstep
+            << std::endl;
   }
-  for (int kz = tfp.mode_start*zstep; kz <= tfp.nzmodes; kz += zstep ) {
-    const amrex::Real kzd = (Real)kz;
-    for (int ky = tfp.mode_start*ystep; ky <= tfp.nymodes; ky += ystep ) {
-      const amrex::Real kyd = (Real)ky;
-      for (int kx = tfp.mode_start*xstep; kx <= tfp.nxmodes; kx += xstep ) {
-	const amrex::Real kxd = (Real)kx;
-	
-	const amrex::Real kappa = sqrt( (kxd*kxd)/(Lx*Lx) + (kyd*kyd)/(Ly*Ly) + (kzd*kzd)/(Lz*Lz) );
-	
-	if (kappa<=kappaMax) {
-	  FTX(kx,ky,kz) = (tfp.freqMin + tfp.freqDiff*DepRand::Random() )*TwoPi;
-	  DepRand::Random(); // dummy FTY (don't remove)
-	  DepRand::Random(); // dummy FTZ (don't remove)
-	  // Translation angles, theta=0..2Pi and phi=0..Pi
-	  TAT(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  DepRand::Random(); // dummy TAP (don't remove)
-	  // Phases
-	  FPX(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPY(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPZ(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPXX(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPYX(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPZX(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPXY(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPYY(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPZY(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPXZ(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPYZ(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPZZ(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  
-	  // Amplitudes (alpha)
-	  const amrex::Real thetaTmp      = DepRand::Random()*TwoPi;
-	  const amrex::Real cosThetaTmp   = cos(thetaTmp);
-	  const amrex::Real sinThetaTmp   = sin(thetaTmp);
-	  
-	  const amrex::Real phiTmp        = DepRand::Random()*Pi;
-	  const amrex::Real cosPhiTmp     = cos(phiTmp);
-	  const amrex::Real sinPhiTmp     = sin(phiTmp);
-	  
-	  const amrex::Real px = cosThetaTmp * sinPhiTmp;
-	  const amrex::Real py = sinThetaTmp * sinPhiTmp;
-	  const amrex::Real pz =               cosPhiTmp;
-	  
-	  const amrex::Real mp2 = px*px + py*py + pz*pz;
-	  if (kappa < 0.000001) {
-	    if (verbose) {
-	      Print() << "ZERO AMPLITUDE MODE " << kx << ky << kz << std::endl;
-	    }
-	    FAX(kx,ky,kz) = 0.;
-	    FAY(kx,ky,kz) = 0.;
-	    FAZ(kx,ky,kz) = 0.;
-	  } else {
-	    // Count modes that contribute
-	    mode_count++;
-	    // Set amplitudes
-	    amrex::Real Ekh;
-	    if (spectrum_type==1) {
-	      Ekh = 1. / kappa;
-	    } else if (spectrum_type==2) {
-	      Ekh = 1. / (kappa*kappa);
-	    } else {
-	      Ekh = 1.;
-	    }
-	    // div_free_forcing (assumed) needs another
-	    Ekh /= kappa;
-	    
-	    if (tfp.moderate_zero_modes==1) {
-	      if (kx==0) Ekh /= 2.;
-	      if (ky==0) Ekh /= 2.;
-	      if (kz==0) Ekh /= 2.;
-	    }
-	    if (force_scale>0.) {
-	      FAX(kx,ky,kz) = tfp.force_scale * px * Ekh / mp2;
-	      FAY(kx,ky,kz) = tfp.force_scale * py * Ekh / mp2;
-	      FAZ(kx,ky,kz) = tfp.force_scale * pz * Ekh / mp2;
-	    } else {
-	      FAX(kx,ky,kz) = px * Ekh / mp2;
-	      FAY(kx,ky,kz) = py * Ekh / mp2;
-	      FAZ(kx,ky,kz) = pz * Ekh / mp2;
-	    }
-	    
-	    if (verbose) {
-	      Print() << "Mode";
-	      Print() << "kappa = " << kx << " " << ky << " " << kz << " " << kappa << " "
-		      << sqrt(FAX(kx,ky,kz)*FAX(kx,ky,kz)+FAY(kx,ky,kz)*FAY(kx,ky,kz)+FAZ(kx,ky,kz)*FAZ(kx,ky,kz)) << std::endl;
-	      Print() << "Amplitudes - A" << std::endl;
-	      Print() << FAX(kx,ky,kz) << " " << FAY(kx,ky,kz) << " " << FAZ(kx,ky,kz) << std::endl;
-	      Print() << "Frequencies" << std::endl;
-	      Print() << FTX(kx,ky,kz) << std::endl;
-	      Print() << "TAT" << std::endl;
-	      Print() << TAT(kx,ky,kz) << std::endl;
-	      Print() << "Amplitudes - AA" << std::endl;
-	      Print() << FPXX(kx,ky,kz) << " " << FPYX(kx,ky,kz) << " " << FPZX(kx,ky,kz) << std::endl;
-	      Print() << FPXY(kx,ky,kz) << " " << FPYY(kx,ky,kz) << " " << FPZY(kx,ky,kz) << std::endl;
-	      Print() << FPXZ(kx,ky,kz) << " " << FPYZ(kx,ky,kz) << " " << FPZZ(kx,ky,kz) << std::endl;
-	    }
-	  }
-	}
+
+  for (int kz = m_tfp.m_mode_start * zstep; kz <= m_tfp.m_nzmodes;
+       kz += zstep) {
+    const amrex::Real kzd = static_cast<amrex::Real>(kz);
+    for (int ky = m_tfp.m_mode_start * ystep; ky <= m_tfp.m_nymodes;
+         ky += ystep) {
+      const amrex::Real kyd = static_cast<amrex::Real>(ky);
+      for (int kx = m_tfp.m_mode_start * xstep; kx <= m_tfp.m_nxmodes;
+           kx += xstep) {
+        const amrex::Real kxd = static_cast<amrex::Real>(kx);
+        const amrex::Real kappa = std::sqrt(
+          (kxd * kxd) / (Lx * Lx) + (kyd * kyd) / (Ly * Ly) +
+          (kzd * kzd) / (Lz * Lz));
+
+        if (kappa <= m_tfp.m_kappaMax) {
+          FTX(kx, ky, kz) =
+            (m_tfp.m_freqMin + m_tfp.m_freqDiff * mersenne_twister::Random()) *
+            TwoPi;
+          mersenne_twister::Random(); // dummy FTY (don't remove)
+          mersenne_twister::Random(); // dummy FTZ (don't remove)
+          // Translation angles, theta=0..2Pi and phi=0..Pi
+          TAT(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          mersenne_twister::Random(); // dummy TAP (don't remove)
+          // Phases
+          FPX(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPY(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPZ(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPXX(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPYX(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPZX(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPXY(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPYY(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPZY(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPXZ(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPYZ(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPZZ(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+
+          // Amplitudes (alpha)
+          const amrex::Real thetaTmp = mersenne_twister::Random() * TwoPi;
+          const amrex::Real cosThetaTmp = cos(thetaTmp);
+          const amrex::Real sinThetaTmp = sin(thetaTmp);
+
+          const amrex::Real phiTmp = mersenne_twister::Random() * Pi;
+          const amrex::Real cosPhiTmp = cos(phiTmp);
+          const amrex::Real sinPhiTmp = sin(phiTmp);
+
+          const amrex::Real px = cosThetaTmp * sinPhiTmp;
+          const amrex::Real py = sinThetaTmp * sinPhiTmp;
+          const amrex::Real pz = cosPhiTmp;
+
+          const amrex::Real mp2 = px * px + py * py + pz * pz;
+          if (kappa < 0.000001) {
+            if (m_tfp.m_verbose > 0) {
+	      amrex::Print() << "   ZERO AMPLITUDE MODE " << kx << ky << kz
+                      << std::endl;
+            }
+            FAX(kx, ky, kz) = 0.;
+            FAY(kx, ky, kz) = 0.;
+            FAZ(kx, ky, kz) = 0.;
+          } else {
+            // Count modes that contribute
+            mode_count++;
+            // Set amplitudes
+            amrex::Real Ekh;
+            if (m_tfp.m_spectrum_type == 1) {
+              Ekh = 1.0 / kappa;
+            } else if (m_tfp.m_spectrum_type == 2) {
+              Ekh = 1.0 / (kappa * kappa);
+            } else {
+              Ekh = 1.0;
+            }
+            // div_free_forcing (assumed) needs another
+            Ekh /= kappa;
+
+            if (m_tfp.m_moderate_zero_modes == 1) {
+              if (kx == 0)
+                Ekh /= 2.;
+              if (ky == 0)
+                Ekh /= 2.;
+              if (kz == 0)
+                Ekh /= 2.;
+            }
+            if (m_tfp.m_force_scale > 0.0) {
+              FAX(kx, ky, kz) = m_tfp.m_force_scale * px * Ekh / mp2;
+              FAY(kx, ky, kz) = m_tfp.m_force_scale * py * Ekh / mp2;
+              FAZ(kx, ky, kz) = m_tfp.m_force_scale * pz * Ekh / mp2;
+            } else {
+              FAX(kx, ky, kz) = px * Ekh / mp2;
+              FAY(kx, ky, kz) = py * Ekh / mp2;
+              FAZ(kx, ky, kz) = pz * Ekh / mp2;
+            }
+
+            if (m_tfp.m_verbose > 1) {
+	      amrex::Print() << "   Mode";
+              amrex::Print() << "   kappa = " << kx << " " << ky << " " << kz << " "
+                      << kappa << " "
+                      << sqrt(
+                           FAX(kx, ky, kz) * FAX(kx, ky, kz) +
+                           FAY(kx, ky, kz) * FAY(kx, ky, kz) +
+                           FAZ(kx, ky, kz) * FAZ(kx, ky, kz))
+                      << std::endl;
+              amrex::Print() << "   Amplitudes - A" << std::endl;
+              amrex::Print() << FAX(kx, ky, kz) << " " << FAY(kx, ky, kz) << " "
+                      << FAZ(kx, ky, kz) << std::endl;
+              amrex::Print() << "   Frequencies" << std::endl;
+              amrex::Print() << FTX(kx, ky, kz) << std::endl;
+              amrex::Print() << "   TAT" << std::endl;
+              amrex::Print() << TAT(kx, ky, kz) << std::endl;
+              amrex::Print() << "   Amplitudes - AA" << std::endl;
+              amrex::Print() << FPXX(kx, ky, kz) << " " << FPYX(kx, ky, kz) << " "
+                      << FPZX(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXY(kx, ky, kz) << " " << FPYY(kx, ky, kz) << " "
+                      << FPZY(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXZ(kx, ky, kz) << " " << FPYZ(kx, ky, kz) << " "
+                      << FPZZ(kx, ky, kz) << std::endl;
+            }
+          }
+        }
       }
     }
   }
-  
+
   // Now let's break symmetry, have to assume high aspect ratio in z for now
   int reduced_mode_count = 0;
-  
-  for (int kz = 1; kz < zstep; kz++ ) {
-    const amrex::Real kzd = (amrex::Real)kz;
-    for (int ky = tfp.mode_start; ky <= tfp.nymodes; ky += ystep ) {
-      const amrex::Real kyd = (amrex::Real)ky;
-      for (int kx = tfp.mode_start; kx <= tfp.nxmodes; kx += xstep ) {
-	const amrex::Real kxd = (amrex::Real)kx;
-	
-	const amrex::Real kappa = sqrt( (kxd*kxd)/(Lx*Lx) + (kyd*kyd)/(Ly*Ly) + (kzd*kzd)/(Lz*Lz) );
-	
-	if (kappa<=kappaMax) {
-	  FTX(kx,ky,kz) = (freqMin + freqDiff*DepRand::Random() )*TwoPi;
-	  DepRand::Random(); // dummy FTY (don't remove)
-	  DepRand::Random(); // dummy FTZ (don't remove)
-	  // Translation angles, theta=0..2Pi and phi=0..Pi
-	  TAT(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  DepRand::Random(); // dummy TAP (don't remove)
-	  // Phases
-	  FPX(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPY(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPZ(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPXX(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPYX(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPZX(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPXY(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPYY(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPZY(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPXZ(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPYZ(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  FPZZ(kx,ky,kz) = DepRand::Random()*TwoPi;
-	  
-	  // Amplitudes (alpha)
-	  const amrex::Real thetaTmp      = DepRand::Random()*TwoPi;
-	  const amrex::Real cosThetaTmp   = cos(thetaTmp);
-	  const amrex::Real sinThetaTmp   = sin(thetaTmp);
-	  
-	  const amrex::Real phiTmp        = DepRand::Random()*Pi;
-	  const amrex::Real cosPhiTmp     = cos(phiTmp);
-	  const amrex::Real sinPhiTmp     = sin(phiTmp);
-	  
-	  const amrex::Real px = cosThetaTmp * sinPhiTmp;
-	  const amrex::Real py = sinThetaTmp * sinPhiTmp;
-	  const amrex::Real pz =               cosPhiTmp;
-	  
-	  const amrex::Real mp2 = px*px + py*py + pz*pz;
-	  if (kappa < 0.000001) {
-	    Print() << "ZERO AMPLITUDE MODE " << kx << ky << kz << std::endl;
-	    FAX(kx,ky,kz) = 0.;
-	    FAY(kx,ky,kz) = 0.;
-	    FAZ(kx,ky,kz) = 0.;
-	  } else {
-	    // Count modes that contribute
-	    reduced_mode_count++;
-	    // Set amplitudes
-	    Real Ekh;
-	    if (tfp.spectrum_type==1) {
-	      Ekh = 1. / kappa;
-	    } else if (spectrum_type==2) {
-	      Ekh = 1. / (kappa*kappa);
-	    } else {
-	      Ekh = 1.;
-	    }
-	    // div_free_forcing (assumed) needs another
-	    Ekh /= kappa;
-	    
-	    if (tfp.moderate_zero_modes==1) {
-	      if (kx==0) Ekh /= 2.;
-	      if (ky==0) Ekh /= 2.;
-	      if (kz==0) Ekh /= 2.;
-	    }
-	    if (tfp.force_scale>0.) {
-	      FAX(kx,ky,kz) = tfp.forcing_epsilon * tfp.force_scale * px * Ekh / mp2;
-	      FAY(kx,ky,kz) = tfp.forcing_epsilon * tfp.force_scale * py * Ekh / mp2;
-	      FAZ(kx,ky,kz) = tfp.forcing_epsilon * tfp.force_scale * pz * Ekh / mp2;
-	    } else {
-	      FAX(kx,ky,kz) = tfp.forcing_epsilon * px * Ekh / mp2;
-	      FAY(kx,ky,kz) = tfp.forcing_epsilon * py * Ekh / mp2;
-	      FAZ(kx,ky,kz) = tfp.forcing_epsilon * pz * Ekh / mp2;
-	    }
-	    
-	    if (verbose) {
-	      Print() << "Mode";
-	      Print() << "kappa = " << kx << " " << ky << " " << kz << " " << kappa << " "
-		      << sqrt(FAX(kx,ky,kz)*FAX(kx,ky,kz)+FAY(kx,ky,kz)*FAY(kx,ky,kz)+FAZ(kx,ky,kz)*FAZ(kx,ky,kz)) << std::endl;
-	      Print() << "Amplitudes - A" << std::endl;
-	      Print() << FAX(kx,ky,kz) << " " << FAY(kx,ky,kz) << " " << FAZ(kx,ky,kz) << std::endl;
-	      Print() << "Frequencies" << std::endl;
-	      Print() << FTX(kx,ky,kz) << std::endl;
-	      Print() << "TAT" << std::endl;
-	      Print() << TAT(kx,ky,kz) << std::endl;
-	      Print() << "Amplitudes - AA" << std::endl;
-	      Print() << FPXX(kx,ky,kz) << " " << FPYX(kx,ky,kz) << " " << FPZX(kx,ky,kz) << std::endl;
-	      Print() << FPXY(kx,ky,kz) << " " << FPYY(kx,ky,kz) << " " << FPZY(kx,ky,kz) << std::endl;
-	      Print() << FPXZ(kx,ky,kz) << " " << FPYZ(kx,ky,kz) << " " << FPZZ(kx,ky,kz) << std::endl;
-	    }
-	  }
-	}
+
+  for (int kz = 1; kz < zstep; ++kz) {
+    const amrex::Real kzd = static_cast<amrex::Real>(kz);
+    for (int ky = m_tfp.m_mode_start; ky <= m_tfp.m_nymodes; ky += ystep) {
+      const amrex::Real kyd = static_cast<amrex::Real>(kz);
+      for (int kx = m_tfp.m_mode_start; kx <= m_tfp.m_nxmodes; kx += xstep) {
+        const amrex::Real kxd = static_cast<amrex::Real>(kx);
+        const amrex::Real kappa = std::sqrt(
+          (kxd * kxd) / (Lx * Lx) + (kyd * kyd) / (Ly * Ly) +
+          (kzd * kzd) / (Lz * Lz));
+
+        if (kappa <= m_tfp.m_kappaMax) {
+          FTX(kx, ky, kz) =
+            (m_tfp.m_freqMin + m_tfp.m_freqDiff * mersenne_twister::Random()) *
+            TwoPi;
+          mersenne_twister::Random(); // dummy FTY (don't remove)
+          mersenne_twister::Random(); // dummy FTZ (don't remove)
+          // Translation angles, theta=0..2Pi and phi=0..Pi
+          TAT(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          mersenne_twister::Random(); // dummy TAP (don't remove)
+          // Phases
+          FPX(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPY(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPZ(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPXX(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPYX(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPZX(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPXY(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPYY(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPZY(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPXZ(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPYZ(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+          FPZZ(kx, ky, kz) = mersenne_twister::Random() * TwoPi;
+
+          // Amplitudes (alpha)
+          const amrex::Real thetaTmp = mersenne_twister::Random() * TwoPi;
+          const amrex::Real cosThetaTmp = cos(thetaTmp);
+          const amrex::Real sinThetaTmp = sin(thetaTmp);
+
+          const amrex::Real phiTmp = mersenne_twister::Random() * Pi;
+          const amrex::Real cosPhiTmp = cos(phiTmp);
+          const amrex::Real sinPhiTmp = sin(phiTmp);
+
+          const amrex::Real px = cosThetaTmp * sinPhiTmp;
+          const amrex::Real py = sinThetaTmp * sinPhiTmp;
+          const amrex::Real pz = cosPhiTmp;
+
+          const amrex::Real mp2 = px * px + py * py + pz * pz;
+          if (kappa < 0.000001) {
+            if (m_tfp.m_verbose > 0) {
+              amrex::Print() << "   ZERO AMPLITUDE MODE " << kx << ky << kz
+                      << std::endl;
+            }
+            FAX(kx, ky, kz) = 0.;
+            FAY(kx, ky, kz) = 0.;
+            FAZ(kx, ky, kz) = 0.;
+          } else {
+            // Count modes that contribute
+            reduced_mode_count++;
+            // Set amplitudes
+            amrex::Real Ekh;
+            if (m_tfp.m_spectrum_type == 1) {
+              Ekh = 1. / kappa;
+            } else if (m_tfp.m_spectrum_type == 2) {
+              Ekh = 1. / (kappa * kappa);
+            } else {
+              Ekh = 1.;
+            }
+            // div_free_forcing (assumed) needs another
+            Ekh /= kappa;
+
+            if (m_tfp.m_moderate_zero_modes == 1) {
+              if (kx == 0)
+                Ekh /= 2.;
+              if (ky == 0)
+                Ekh /= 2.;
+              if (kz == 0)
+                Ekh /= 2.;
+            }
+            if (m_tfp.m_force_scale > 0.) {
+              FAX(kx, ky, kz) =
+                m_tfp.m_forcing_epsilon * m_tfp.m_force_scale * px * Ekh / mp2;
+              FAY(kx, ky, kz) =
+                m_tfp.m_forcing_epsilon * m_tfp.m_force_scale * py * Ekh / mp2;
+              FAZ(kx, ky, kz) =
+                m_tfp.m_forcing_epsilon * m_tfp.m_force_scale * pz * Ekh / mp2;
+            } else {
+              FAX(kx, ky, kz) = m_tfp.m_forcing_epsilon * px * Ekh / mp2;
+              FAY(kx, ky, kz) = m_tfp.m_forcing_epsilon * py * Ekh / mp2;
+              FAZ(kx, ky, kz) = m_tfp.m_forcing_epsilon * pz * Ekh / mp2;
+            }
+
+            if (m_tfp.m_verbose > 1) {
+              amrex::Print() << "   Mode";
+              amrex::Print() << "   kappa = " << kx << " " << ky << " " << kz << " "
+                      << kappa << " "
+			     << std::sqrt(
+                           FAX(kx, ky, kz) * FAX(kx, ky, kz) +
+                           FAY(kx, ky, kz) * FAY(kx, ky, kz) +
+                           FAZ(kx, ky, kz) * FAZ(kx, ky, kz))
+                      << std::endl;
+              amrex::Print() << "   Amplitudes - A" << std::endl;
+              amrex::Print() << FAX(kx, ky, kz) << " " << FAY(kx, ky, kz) << " "
+                      << FAZ(kx, ky, kz) << std::endl;
+              amrex::Print() << "   Frequencies" << std::endl;
+              amrex::Print() << FTX(kx, ky, kz) << std::endl;
+              amrex::Print() << "   TAT" << std::endl;
+              amrex::Print() << TAT(kx, ky, kz) << std::endl;
+              amrex::Print() << "   Amplitudes - AA" << std::endl;
+              amrex::Print() << FPXX(kx, ky, kz) << " " << FPYX(kx, ky, kz) << " "
+                      << FPZX(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXY(kx, ky, kz) << " " << FPYY(kx, ky, kz) << " "
+                      << FPZY(kx, ky, kz) << std::endl;
+              amrex::Print() << FPXZ(kx, ky, kz) << " " << FPYZ(kx, ky, kz) << " "
+                      << FPZZ(kx, ky, kz) << std::endl;
+            }
+          }
+        }
       }
     }
   }
-  
-  Print() << "mode_count = " << mode_count << std::endl;
-  Print() << "reduced_mode_count = " << reduced_mode_count << std::endl;
-  if (tfp.spectrum_type==1) {
-    Print() << "Spectrum type 1" << std::endl;
-  } else if (tfp.spectrum_type==2) {
-    Print() << "Spectrum type 2" << std::endl;
-  } else {
-    Print() << "Spectrum type OTHER" << std::endl;
+
+  if (m_tfp.m_verbose > 0) {
+    amrex::Print() << "mode_count = " << mode_count << std::endl;
+    amrex::Print() << "reduced_mode_count = " << reduced_mode_count << std::endl;
+    if (m_tfp.m_spectrum_type == 1) {
+      amrex::Print() << "Spectrum type 1" << std::endl;
+    } else if (m_tfp.m_spectrum_type == 2) {
+      amrex::Print() << "Spectrum type 2" << std::endl;
+    } else {
+      amrex::Print() << "Spectrum type OTHER" << std::endl;
+    }
   }
-  
+
   // Now allocate forcedata and copy in tmp array.
 #ifdef AMREX_USE_GPU
-  if (Gpu::inLaunchRegion())
-    {
-      tfp.forcedata = static_cast<Real*>(The_Arena()->alloc(tmp_size*sizeof(Real)));
-      Gpu::htod_memcpy_async(forcedata, tmp, tmp_size*sizeof(Real));
-    }
-  else
+  if (amrex::Gpu::inLaunchRegion()) {
+    m_tfp.m_forcedata =
+      static_cast<amrex::Real*>(amrex::The_Arena()->alloc(tmp_buffer_size * sizeof(amrex::Real)));
+    amrex::Gpu::htod_memcpy_async(
+      m_tfp.m_forcedata, tmp_buffer, tmp_buffer_size * sizeof(amrex::Real));
+  } else
 #endif
-    {
-      tfp.forcedata = static_cast<Real*>(The_Pinned_Arena()->alloc(tmp_size*sizeof(Real)));
-      std::memcpy(forcedata, tmp, tmp_size*sizeof(Real));
-    }
+  {
+    m_tfp.m_forcedata = static_cast<amrex::Real*>(
+      amrex::The_Pinned_Arena()->alloc(tmp_buffer_size * sizeof(amrex::Real)));
+    std::memcpy(m_tfp.m_forcedata, tmp_buffer, tmp_buffer_size * sizeof(amrex::Real));
+  }
+
+  if (m_tfp.m_verbose > 0) {
+    amrex::Print() << "========================================================"
+            << std::endl;
+  }
+  m_turbforcing_initialized = true;
 }
+
+void
+TurbForcing::addTurbVelForces(
+  amrex::GeometryData const& geomdata,
+  const amrex::Box& bx,
+  const amrex::Real& time,
+  amrex::Array4<amrex::Real> const& force,
+  amrex::Array4<const amrex::Real> const& rho,
+  const int a_incompressible)
+{
+  AMREX_ALWAYS_ASSERT(m_turbforcing_initialized);
   
+  if (a_incompressible != 0 && m_tfp.m_rho_incompressible <= 0.0) {
+    amrex::Abort("turbforce.rho_incompressible must be greater than 0 when "
+                 "incompressible\n");
+  }
+
+  constexpr amrex::Real Pi = 3.14159265358979323846264338327950288;
+  constexpr amrex::Real TwoPi = 2.0 * Pi;
+
+  const amrex::Real* problo = geomdata.ProbLo();
+  const amrex::Real* probhi = geomdata.ProbHi();
+
+  const amrex::Real Lx = probhi[0] - problo[0];
+  const amrex::Real Ly = probhi[1] - problo[1];
+  const amrex::Real Lz = probhi[2] - problo[2];
+
+  const int* f_lo = bx.loVect();
+  const int* f_hi = bx.hiVect();
+
+  const int xstep = static_cast<int>(Lx / m_tfp.m_Lmin + 0.5);
+  const int ystep = static_cast<int>(Ly / m_tfp.m_Lmin + 0.5);
+  const int zstep = static_cast<int>(Lz / m_tfp.m_Lmin + 0.5);
+
+  const amrex::Real kappaMax = m_tfp.m_nmodes / m_tfp.m_Lmin + 1.0e-8;
+
+  const amrex::Real forcetime = time + m_tfp.m_time_offset;
+
+  auto const& dx = geomdata.CellSize();
+
+  // Separate out forcing data into individual Array4's
+  int i_arr = 0;
+  constexpr int fd_ncomp = 1;
+  constexpr int num_elmts =
+    m_tfp.m_array_size * m_tfp.m_array_size * m_tfp.m_array_size;
+  constexpr amrex::Dim3 fd_begin{0, 0, 0};
+  constexpr amrex::Dim3 fd_end{
+    m_tfp.m_array_size, m_tfp.m_array_size, m_tfp.m_array_size};
+
+  amrex::Array4<amrex::Real> FTX(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> TAT(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPX(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPY(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPZ(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FAX(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FAY(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FAZ(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPXX(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPXY(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPXZ(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPYX(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPYY(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPYZ(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPZX(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPZY(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+  amrex::Array4<amrex::Real> FPZZ(
+    &m_tfp.m_forcedata[(i_arr++) * num_elmts], fd_begin, fd_end, fd_ncomp);
+
+  const amrex::RealBox loc =
+    amrex::RealBox(bx, geomdata.CellSize(), geomdata.ProbLo());
+  const auto& loc_lo = loc.lo();
+  const amrex::GpuArray<const amrex::Real, AMREX_SPACEDIM> xlo = {
+    AMREX_D_DECL(loc_lo[0], loc_lo[1], loc_lo[2])};
+
   //
+  // Construct force at fewer points and then interpolate.
+  // This is much faster on CPU.
   //
-//
 
-void
-TurbulentForcing::addTurbVelForces(GeometryData const& geomdata,
-				   const Box& bx,
-				   const Real& time,
-				   Array4<Real> const& force,
-				   Array4<const Real> const& rho)
-{
+  const amrex::Real hx = dx[0];
+  const amrex::Real hy = dx[1];
+  const amrex::Real hz = dx[2];
 
-  constexpr Real Pi = M_PI;
-     constexpr Real TwoPi = 2.*Pi;
-     
-     // Physical coordinates
-     auto const& problo = geomdata.ProbLo();
-     auto const& probhi = geomdata.ProbHi();
+  const int ilo = f_lo[0];
+  const int jlo = f_lo[1];
+  const int klo = f_lo[2];
 
-     const amrex::Real Lx = probhi[0]-problo[0];
-     const amrex::Real Ly = probhi[1]-problo[1];
-     const amrex::Real Lz = probhi[2]-problo[2];
+  const int ihi = f_hi[0];
+  const int jhi = f_hi[1];
+  const int khi = f_hi[2];
 
-     const int* f_lo = bx.loVect();
-     const int* f_hi = bx.hiVect();
-    
-     const int xstep = static_cast<int>(Lx/tfp.Lmin+0.5);
-     const int ystep = static_cast<int>(Ly/tfp.Lmin+0.5);
-     const int zstep = static_cast<int>(Lz/tfp.Lmin+0.5);
+  // coarse cell size
+  const amrex::Real ff_hx = hx * m_tfp.m_ff_factor;
+  const amrex::Real ff_hy = hy * m_tfp.m_ff_factor;
+  const amrex::Real ff_hz = hz * m_tfp.m_ff_factor;
 
-     const amrex::Real kappaMax = tfp.nmodes/tfp.Lmin + 1.0e-8;
+  // coarse bounds (without accounting for ghost cells)
+  // FIXME -- think about how bx (the box we want to fill) may not be the same
+  // as the force box!
+  int ff_ilo = ilo / m_tfp.m_ff_factor;
+  int ff_jlo = jlo / m_tfp.m_ff_factor;
+  int ff_klo = klo / m_tfp.m_ff_factor;
 
-     const amrex::Real forcetime = time + time_offset;
+  int ff_ihi = (ihi + 1) / m_tfp.m_ff_factor;
+  int ff_jhi = (jhi + 1) / m_tfp.m_ff_factor;
+  int ff_khi = (khi + 1) / m_tfp.m_ff_factor;
 
-     auto const& dx = geomdata.CellSize();
+  // adjust for ghost cells
+  if (ilo < (ff_ilo * m_tfp.m_ff_factor)) {
+    ff_ilo = ff_ilo - 1;
+  }
+  if (jlo < (ff_jlo * m_tfp.m_ff_factor)) {
+    ff_jlo = ff_jlo - 1;
+  }
+  if (klo < (ff_klo * m_tfp.m_ff_factor)) {
+    ff_klo = ff_klo - 1;
+  }
+  if (ihi == (ff_ihi * m_tfp.m_ff_factor)) {
+    ff_ihi = ff_ihi + 1;
+  }
+  if (jhi == (ff_jhi * m_tfp.m_ff_factor)) {
+    ff_jhi = ff_jhi + 1;
+  }
+  if (khi == (ff_khi * m_tfp.m_ff_factor)) {
+    ff_khi = ff_khi + 1;
+  }
 
-     // Separate out forcing data into individual Array4's
-     int i_arr = 0;
-     constexpr int fd_ncomp = 1;
-     constexpr int num_elmts=tfp.array_size*tfp.array_size*tfp.array_size;
-     constexpr amrex::Dim3 fd_begin{0,0,0};
-     constexpr amrex::Dim3 fd_end{tfp.array_size,tfp.array_size,tfp.array_size};
+  // allocate coarse force array
+  amrex::Box ffbx(amrex::IntVect(AMREX_D_DECL(ff_ilo, ff_jlo, ff_klo)),
+		  amrex::IntVect(AMREX_D_DECL(ff_ihi, ff_jhi, ff_khi)));
+  // not sure if want elixir, gpu::sync, or async_arena here...
+  amrex::FArrayBox ff_force(ffbx, AMREX_SPACEDIM);
+  const auto& ffarr = ff_force.array();
 
-     amrex::Array4<amrex::Real> FTX(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> TAT(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPX(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPY(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPZ(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FAX(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FAY(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FAZ(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPXX(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPXY(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPXZ(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPYX(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPYY(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPYZ(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPZX(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPZY(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
-     amrex::Array4<amrex::Real> FPZZ(&tfp.forcedata[(i_arr++)*num_elmts], fd_begin, fd_end, fd_ncomp);
+  // Construct node-based coarse forcing
+  amrex::ParallelFor(ffbx, [=,mode_start = m_tfp.m_mode_start,nmodes=m_tfp.m_nmodes] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+    amrex::Real z = xlo[2] + ff_hz * (k - ff_klo);
+    amrex::Real y = xlo[1] + ff_hy * (j - ff_jlo);
+    amrex::Real x = xlo[0] + ff_hx * (i - ff_ilo);
 
-     amrex::RealBox loc = RealBox(bx,geomdata.CellSize(),geomdata.ProbLo());
-     const auto& loc_lo = loc.lo();
-     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> xlo = {AMREX_D_DECL(loc_lo[0],loc_lo[1],loc_lo[2])};
+    for (int n = 0; n < AMREX_SPACEDIM; ++n) {
+      ffarr(i, j, k, n) = 0.0;
+    }
 
-     //
-     // Construct force at fewer points and then interpolate.
-     // This is much faster on CPU.
-     //
+    // forcedata (and Array4) has column-major layout
+    for (int kz = mode_start * zstep; kz <= nmodes * zstep;
+         kz += zstep) {
+      for (int ky = mode_start * ystep; ky <= nmodes * ystep;
+           ky += ystep) {
+        for (int kx = mode_start * xstep; kx <= nmodes * xstep;
+             kx += xstep) {
+          const amrex::Real kappa = std::sqrt(
+            (kx * kx) / (Lx * Lx) + (ky * ky) / (Ly * Ly) +
+            (kz * kz) / (Lz * Lz));
 
-     const amrex::Real hx = dx[0];
-     const amrex::Real hy = dx[1];
-     const amrex::Real hz = dx[2];
+          if (kappa <= kappaMax) {
+            const amrex::Real xT = cos(FTX(kx, ky, kz) * forcetime + TAT(kx, ky, kz));
 
-     const int ilo = f_lo[0];
-     const int jlo = f_lo[1];
-     const int klo = f_lo[2];
+            ffarr(i, j, k, 0) +=
+              xT * (FAZ(kx, ky, kz) * TwoPi * (ky / Ly) *
+                      sin(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
+                      cos(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
+                      sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)) -
+                    FAY(kx, ky, kz) * TwoPi * (kz / Lz) *
+                      sin(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
+                      sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
+                      cos(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)));
 
-     const int ihi = f_hi[0];
-     const int jhi = f_hi[1];
-     const int khi = f_hi[2];
+            ffarr(i, j, k, 1) +=
+              xT * (FAX(kx, ky, kz) * TwoPi * (kz / Lz) *
+                      sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
+                      sin(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
+                      cos(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)) -
+                    FAZ(kx, ky, kz) * TwoPi * (kx / Lx) *
+                      cos(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
+                      sin(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
+                      sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)));
 
-     // coarse cell size
-     const amrex::Real ff_hx = hx*tfp.ff_factor;
-     const amrex::Real ff_hy = hy*tfp.ff_factor;
-     const amrex::Real ff_hz = hz*tfp.ff_factor;
+            ffarr(i, j, k, 2) +=
+              xT * (FAY(kx, ky, kz) * TwoPi * (kx / Lx) *
+                      cos(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
+                      sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
+                      sin(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)) -
+                    FAX(kx, ky, kz) * TwoPi * (ky / Ly) *
+                      sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
+                      cos(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
+                      sin(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)));
+          }
+        }
+      }
+    }
 
-     // coarse bounds (without accounting for ghost cells)
-     // FIXME -- think about how bx (the box we want to fill) may not be the same as the force box!
-     const int ff_ilo = ilo/tfp.ff_factor;
-     const int ff_jlo = jlo/tfp.ff_factor;
-     const int ff_klo = klo/tfp.ff_factor;
+    //
+    // For high aspect ratio domain, add more modes to break symmetry at a low
+    // level. We assume Lz is longer, Lx = Ly.
+    //
+    for (int kz = 1; kz <= zstep - 1; ++kz) {
+      for (int ky = mode_start; ky <= nmodes * ystep; ++ky) {
+        for (int kx = mode_start; kx <= nmodes * xstep; ++kx) {
+          const amrex::Real kappa = std::sqrt(
+            (kx * kx) / (Lx * Lx) + (ky * ky) / (Ly * Ly) +
+            (kz * kz) / (Lz * Lz));
 
-     const int ff_ihi = (ihi+1)/tfp.ff_factor;
-     const int ff_jhi = (jhi+1)/tfp.ff_factor;
-     const int ff_khi = (khi+1)/tfp.ff_factor;
+          if (kappa <= kappaMax) {
+            const amrex::Real xT =
+              cos(FTX(kx, ky, kz) * forcetime + TAT(kx, ky, kz));
 
-     // adjust for ghost cells
-     if (ilo < (ff_ilo*tfp.ff_factor)) {
-         ff_ilo=ff_ilo-1;
-     }
-     if (jlo < (ff_jlo*tfp.ff_factor)) {
-         ff_jlo=ff_jlo-1;
-     }
-     if (klo < (ff_klo*tfp.ff_factor)) {
-         ff_klo=ff_klo-1;
-     }
-     if (ihi == (ff_ihi*tfp.ff_factor)) {
-         ff_ihi=ff_ihi+1;
-     }
-     if (jhi == (ff_jhi*tfp.ff_factor)) {
-         ff_jhi=ff_jhi+1;
-     }
-     if (khi == (ff_khi*tfp.ff_factor)) {
-         ff_khi=ff_khi+1;
-     }
+            ffarr(i, j, k, 0) +=
+              xT * (FAZ(kx, ky, kz) * TwoPi * (ky / Ly) *
+                      sin(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
+                      cos(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
+                      sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)) -
+                    FAY(kx, ky, kz) * TwoPi * (kz / Lz) *
+                      sin(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
+                      sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
+                      cos(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)));
 
-     // allocate coarse force array
-     amrex::Box ffbx(amrex::IntVect(ff_ilo, ff_jlo, ff_klo), amrex::IntVect(ff_ihi, ff_jhi, ff_khi));
-     // not sure if want elixir, gpu::sync, or async_arena here...
-     FArrayBox ff_force(ffbx,AMREX_SPACEDIM);
-     const auto& ffarr = ff_force.array();
-     //TLH::UP TO HERE!!!!
-     // Construct node-based coarse forcing
-     ParallelFor(ffbx, [ = ]
-     AMREX_GPU_DEVICE (int i, int j, int k ) noexcept
-     {
-         Real z = xlo[2] + ff_hz*(k-ff_klo);
-         Real y = xlo[1] + ff_hy*(j-ff_jlo);
-         Real x = xlo[0] + ff_hx*(i-ff_ilo);
+            ffarr(i, j, k, 1) +=
+              xT * (FAX(kx, ky, kz) * TwoPi * (kz / Lz) *
+                      sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
+                      sin(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
+                      cos(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)) -
+                    FAZ(kx, ky, kz) * TwoPi * (kx / Lx) *
+                      cos(TwoPi * kx * x / Lx + FPZX(kx, ky, kz)) *
+                      sin(TwoPi * ky * y / Ly + FPZY(kx, ky, kz)) *
+                      sin(TwoPi * kz * z / Lz + FPZZ(kx, ky, kz)));
 
-         for (int n = 0; n < AMREX_SPACEDIM; n++)
-             ffarr(i,j,k,n) = 0.0;
+            ffarr(i, j, k, 2) +=
+              xT * (FAY(kx, ky, kz) * TwoPi * (kx / Lx) *
+                      cos(TwoPi * kx * x / Lx + FPYX(kx, ky, kz)) *
+                      sin(TwoPi * ky * y / Ly + FPYY(kx, ky, kz)) *
+                      sin(TwoPi * kz * z / Lz + FPYZ(kx, ky, kz)) -
+                    FAX(kx, ky, kz) * TwoPi * (ky / Ly) *
+                      sin(TwoPi * kx * x / Lx + FPXX(kx, ky, kz)) *
+                      cos(TwoPi * ky * y / Ly + FPXY(kx, ky, kz)) *
+                      sin(TwoPi * kz * z / Lz + FPXZ(kx, ky, kz)));
+          }
+        }
+      }
+    }
+  });
 
-         // forcedata (and Array4) has column-major layout
-         for (int kz = TurbulentForcing::mode_start*zstep; kz <= TurbulentForcing::nmodes*zstep; kz += zstep) {
-             for (int ky = TurbulentForcing::mode_start*ystep; ky <= TurbulentForcing::nmodes*ystep; ky += ystep) {
-                 for (int kx = TurbulentForcing::mode_start*xstep; kx <= TurbulentForcing::nmodes*xstep; kx += xstep)
-                 {
-                     Real kappa = sqrt( (kx*kx)/(Lx*Lx) + (ky*ky)/(Ly*Ly) + (kz*kz)/(Lz*Lz) );
+  // Need all of ffarr filled for next lambda
+  amrex::Gpu::synchronize();
 
-                     if (kappa <= kappaMax)
-                     {
-                         Real xT = cos(FTX(kx,ky,kz)*forcetime + TAT(kx,ky,kz));
+  // Now interpolate onto fine grid
+  if (a_incompressible == 0) {
+    amrex::ParallelFor(
+      bx, AMREX_SPACEDIM,
+      [=,ff_factor = m_tfp.m_ff_factor] AMREX_GPU_DEVICE(int i, int j, int k, int n) noexcept {
+        const int ff_k = k / ff_factor;
+        const int ff_j = j / ff_factor;
+        const int ff_i = i / ff_factor;
 
-                             ffarr(i,j,k,0) += xT *
-                                 ( FAZ(kx,ky,kz)*TwoPi*(ky/Ly)
-                                   *   sin(TwoPi*kx*x/Lx+FPZX(kx,ky,kz))
-                                   *   cos(TwoPi*ky*y/Ly+FPZY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPZZ(kx,ky,kz))
-                                   - FAY(kx,ky,kz)*TwoPi*(kz/Lz)
-                                   *   sin(TwoPi*kx*x/Lx+FPYX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPYY(kx,ky,kz))
-                                   *   cos(TwoPi*kz*z/Lz+FPYZ(kx,ky,kz)) );
+        const amrex::Real zd =
+          (hz * (k - klo + 0.5) - ff_hz * (ff_k - ff_klo)) / ff_hz;
+        const amrex::Real yd =
+          (hy * (j - jlo + 0.5) - ff_hy * (ff_j - ff_jlo)) / ff_hy;
+        const amrex::Real xd =
+          (hx * (i - ilo + 0.5) - ff_hx * (ff_i - ff_ilo)) / ff_hx;
 
-                             ffarr(i,j,k,1) += xT *
-                                 ( FAX(kx,ky,kz)*TwoPi*(kz/Lz)
-                                   *   sin(TwoPi*kx*x/Lx+FPXX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPXY(kx,ky,kz))
-                                   *   cos(TwoPi*kz*z/Lz+FPXZ(kx,ky,kz))
-                                   - FAZ(kx,ky,kz)*TwoPi*(kx/Lx)
-                                   *   cos(TwoPi*kx*x/Lx+FPZX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPZY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPZZ(kx,ky,kz)) );
+        const amrex::Real ff00 = ffarr(ff_i, ff_j, ff_k, n) * (1. - xd) +
+                                 ffarr(ff_i + 1, ff_j, ff_k, n) * xd;
+        const amrex::Real ff01 = ffarr(ff_i, ff_j, ff_k + 1, n) * (1. - xd) +
+                                 ffarr(ff_i + 1, ff_j, ff_k + 1, n) * xd;
+        const amrex::Real ff10 = ffarr(ff_i, ff_j + 1, ff_k, n) * (1. - xd) +
+                                 ffarr(ff_i + 1, ff_j + 1, ff_k, n) * xd;
+        const amrex::Real ff11 =
+          ffarr(ff_i, ff_j + 1, ff_k + 1, n) * (1. - xd) +
+          ffarr(ff_i + 1, ff_j + 1, ff_k + 1, n) * xd;
+        const amrex::Real ff = (ff00 * (1. - yd) + ff10 * yd) * (1. - zd) +
+                               (ff01 * (1. - yd) + ff11 * yd) * zd;
 
-                             ffarr(i,j,k,2) += xT *
-                                 ( FAY(kx,ky,kz)*TwoPi*(kx/Lx)
-                                   *   cos(TwoPi*kx*x/Lx+FPYX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPYY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPYZ(kx,ky,kz))
-                                   - FAX(kx,ky,kz)*TwoPi*(ky/Ly)
-                                   *   sin(TwoPi*kx*x/Lx+FPXX(kx,ky,kz))
-                                   *   cos(TwoPi*ky*y/Ly+FPXY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPXZ(kx,ky,kz)) );
-                     }
-                 }
-             }
-         }
-
-         //
-         // For high aspect ratio domain, add more modes to break symmetry at a low level.
-         // We assume Lz is longer, Lx = Ly.
-         //
-         for ( int kz = 1; kz <= zstep-1; kz++) {
-             for ( int ky = TurbulentForcing::mode_start; ky <= TurbulentForcing::nmodes*ystep; ky++) {
-                 for ( int kx = TurbulentForcing::mode_start; kx <= TurbulentForcing::nmodes*xstep; kx++)
-                 {
-                     Real kappa = sqrt( (kx*kx)/(Lx*Lx) + (ky*ky)/(Ly*Ly) + (kz*kz)/(Lz*Lz) );
-
-                     if (kappa <= kappaMax)
-                     {
-                         Real xT = cos(FTX(kx,ky,kz)*forcetime + TAT(kx,ky,kz));
-
-                             ffarr(i,j,k,0) += xT *
-                                 ( FAZ(kx,ky,kz)*TwoPi*(ky/Ly)
-                                   *   sin(TwoPi*kx*x/Lx+FPZX(kx,ky,kz))
-                                   *   cos(TwoPi*ky*y/Ly+FPZY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPZZ(kx,ky,kz))
-                                   - FAY(kx,ky,kz)*TwoPi*(kz/Lz)
-                                   *   sin(TwoPi*kx*x/Lx+FPYX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPYY(kx,ky,kz))
-                                   *   cos(TwoPi*kz*z/Lz+FPYZ(kx,ky,kz)) );
-
-                             ffarr(i,j,k,1) += xT *
-                                 ( FAX(kx,ky,kz)*TwoPi*(kz/Lz)
-                                   *   sin(TwoPi*kx*x/Lx+FPXX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPXY(kx,ky,kz))
-                                   *   cos(TwoPi*kz*z/Lz+FPXZ(kx,ky,kz))
-                                   - FAZ(kx,ky,kz)*TwoPi*(kx/Lx)
-                                   *   cos(TwoPi*kx*x/Lx+FPZX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPZY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPZZ(kx,ky,kz)) );
-
-                             ffarr(i,j,k,2) += xT *
-                                 ( FAY(kx,ky,kz)*TwoPi*(kx/Lx)
-                                   *   cos(TwoPi*kx*x/Lx+FPYX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPYY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPYZ(kx,ky,kz))
-                                   - FAX(kx,ky,kz)*TwoPi*(ky/Ly)
-                                   *   sin(TwoPi*kx*x/Lx+FPXX(kx,ky,kz))
-                                   *   cos(TwoPi*ky*y/Ly+FPXY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPXZ(kx,ky,kz)) );
-                     }
-                 }
-             }
-         }
-
-     });
-
-     // Need all of ffarr filled for next lambda
-     Gpu::synchronize();
-
-     // Now interpolate onto fine grid
-     ParallelFor(bx, AMREX_SPACEDIM, [ = ]
-     AMREX_GPU_DEVICE (int i, int j, int k, int n ) noexcept
-     {
-         int ff_k = k/TurbulentForcing::ff_factor;
-         int ff_j = j/TurbulentForcing::ff_factor;
-         int ff_i = i/TurbulentForcing::ff_factor;
-
-         Real zd = ( hz*(k-klo + 0.5) - ff_hz*(ff_k-ff_klo) )/ff_hz;
-         Real yd = ( hy*(j-jlo + 0.5) - ff_hy*(ff_j-ff_jlo) )/ff_hy;
-         Real xd = ( hx*(i-ilo + 0.5) - ff_hx*(ff_i-ff_ilo) )/ff_hx;
-
-         Real ff00 =  ffarr(ff_i  ,ff_j  ,ff_k  ,n) * (1. - xd)
-             + ffarr(ff_i+1,ff_j  ,ff_k  ,n) * xd;
-         Real ff01 =  ffarr(ff_i  ,ff_j  ,ff_k+1,n) * (1. - xd)
-             + ffarr(ff_i+1,ff_j  ,ff_k+1,n) * xd;
-         Real ff10 =  ffarr(ff_i  ,ff_j+1,ff_k  ,n) * (1. - xd)
-             + ffarr(ff_i+1,ff_j+1,ff_k  ,n) * xd;
-         Real ff11 =  ffarr(ff_i  ,ff_j+1,ff_k+1,n) * (1. - xd)
-             + ffarr(ff_i+1,ff_j+1,ff_k+1,n) * xd;
-
-         Real ff =  ( ff00*(1.-yd)+ff10*yd ) * (1. - zd)
-             + ( ff01*(1.-yd)+ff11*yd ) * zd;
-
-         force(i,j,k,n) += rho(i,j,k) * ff;
-
-     });
+        force(i, j, k, n) += rho(i, j, k) * ff;
+      });
+  } else {
+    amrex::ParallelFor(
+		       bx, AMREX_SPACEDIM,
+		       [=,ff_factor = m_tfp.m_ff_factor,rho = m_tfp.m_rho_incompressible] AMREX_GPU_DEVICE(int i, int j, int k, int n) noexcept {
+			 const int ff_k = k / ff_factor;
+			 const int ff_j = j / ff_factor;
+			 const int ff_i = i / ff_factor;
+			 
+			 const amrex::Real zd =
+			   (hz * (k - klo + 0.5) - ff_hz * (ff_k - ff_klo)) / ff_hz;
+			 const amrex::Real yd =
+			   (hy * (j - jlo + 0.5) - ff_hy * (ff_j - ff_jlo)) / ff_hy;
+			 const amrex::Real xd =
+			   (hx * (i - ilo + 0.5) - ff_hx * (ff_i - ff_ilo)) / ff_hx;
+			 
+			 const amrex::Real ff00 = ffarr(ff_i, ff_j, ff_k, n) * (1. - xd) +
+			   ffarr(ff_i + 1, ff_j, ff_k, n) * xd;
+			 const amrex::Real ff01 = ffarr(ff_i, ff_j, ff_k + 1, n) * (1. - xd) +
+			   ffarr(ff_i + 1, ff_j, ff_k + 1, n) * xd;
+			 const amrex::Real ff10 = ffarr(ff_i, ff_j + 1, ff_k, n) * (1. - xd) +
+			   ffarr(ff_i + 1, ff_j + 1, ff_k, n) * xd;
+			 const amrex::Real ff11 =
+			   ffarr(ff_i, ff_j + 1, ff_k + 1, n) * (1. - xd) +
+			   ffarr(ff_i + 1, ff_j + 1, ff_k + 1, n) * xd;
+			 
+			 const amrex::Real ff = (ff00 * (1. - yd) + ff10 * yd) * (1. - zd) +
+			   (ff01 * (1. - yd) + ff11 * yd) * zd;
+			 
+			 force(i, j, k, n) += rho * ff;
+      });
+  }
 }
 
-//
-// Add derived variables to plotfile
-//
-void
-TurbulentForcing::deriveForcing(
-  PeleLM* a_pelelm,
-  const Box& bx,
-  FArrayBox& derfab,
-  int dcomp,
-  int ncomp,
-  const FArrayBox& statefab,
-  const FArrayBox& /*reactfab*/,
-  const FArrayBox& /*pressfab*/,
-  const Geometry& geom,
-  Real time,
-  const Vector<BCRec>& /*bcrec*/,
-  int /*level*/)
-
-{
-     amrex::ignore_unused(a_pelelm, ncomp);
-     AMREX_ASSERT(derfab.box().contains(bx));
-     AMREX_ASSERT(statefab.box().contains(bx));
-     AMREX_ASSERT(derfab.nComp() >= dcomp + ncomp);
-     AMREX_ASSERT(!a_pelelm->m_incompressible);
-
-     // Need geom for forcing
-     GeometryData const& geomdata = geom.data();
-
-     Array4<Real> const& der = derfab.array(dcomp);     
-     // Set derfab to zero first
-     derfab.setVal<amrex::RunOn::Device>(0.0, bx, dcomp, ncomp);
-     
-     // Declare a pointer for the density array view
-     Array4<const Real> rho;
-     
-     // If incompressible, create a small temporary density array filled with m_rho
-     if (a_pelelm->m_incompressible != 0) {
-       static FArrayBox DensityFab;  // reuse across calls if this is in a looped context (optional)
-       DensityFab.resize(bx, 1);
-       DensityFab.setVal<amrex::RunOn::Device>(a_pelelm->m_rho, bx, 0, 1);
-       rho = DensityFab.const_array();
-     } else {
-       rho = statefab.const_array(DENSITY);
-     }
-     
-     // call the function above to construct the forcing
-     addTurbVelForces(geomdata,bx,time,der,rho);
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Edward made me take this out
-
-#if 0
-     //
-     // Original implementation using all 33 points in k-space.
-     // May be fast enough on GPU.
-     //
-
-     auto const& dens = Scal.array(scalScomp);
-
-     // Construct cell-centered forcing
-     ParallelFor(bx, [ = ]
-     AMREX_GPU_DEVICE (int i, int j, int k ) noexcept
-     {
-         Real z = xlo[2] + hz*(k-klo + 0.5);
-         Real y = xlo[1] + hy*(j-jlo + 0.5);
-         Real x = xlo[0] + hx*(i-ilo + 0.5);
-
-         Real f1 = 0;
-         Real f2 = 0;
-         Real f3 = 0;
-
-         // forcedata (and Array4) has column-major layout
-         for (int kz = TurbulentForcing::mode_start*zstep; kz <= TurbulentForcing::nmodes*zstep; kz += zstep) {
-             for (int ky = TurbulentForcing::mode_start*ystep; ky <= TurbulentForcing::nmodes*ystep; ky += ystep) {
-                 for (int kx = TurbulentForcing::mode_start*xstep; kx <= TurbulentForcing::nmodes*xstep; kx += xstep)
-                 {
-                     Real kappa = sqrt( (kx*kx)/(Lx*Lx) + (ky*ky)/(Ly*Ly) + (kz*kz)/(Lz*Lz) );
-
-                     if (kappa <= kappaMax)
-                     {
-                         Real xT = cos(FTX(kx,ky,kz)*forcetime + TAT(kx,ky,kz));
-
-                         // if ( i==0 && j==0 && k==0 && kx==0 && ky==0 && kx==0){
-                         //     printf("(0,0,0) : xT : %15.13e %15.13e %15.13e %15.13e\n",
-                         //         FTX(kx,ky,kz), time, TAT(kx,ky,kz), xT);
-                         //     Abort();
-                         // }
-
-
-                             f1 += xT *
-                                 ( FAZ(kx,ky,kz)*TwoPi*(ky/Ly)
-                                   *   sin(TwoPi*kx*x/Lx+FPZX(kx,ky,kz))
-                                   *   cos(TwoPi*ky*y/Ly+FPZY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPZZ(kx,ky,kz))
-                                   - FAY(kx,ky,kz)*TwoPi*(kz/Lz)
-                                   *   sin(TwoPi*kx*x/Lx+FPYX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPYY(kx,ky,kz))
-                                   *   cos(TwoPi*kz*z/Lz+FPYZ(kx,ky,kz)) );
-
-                             f2 += xT *
-                                 ( FAX(kx,ky,kz)*TwoPi*(kz/Lz)
-                                   *   sin(TwoPi*kx*x/Lx+FPXX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPXY(kx,ky,kz))
-                                   *   cos(TwoPi*kz*z/Lz+FPXZ(kx,ky,kz))
-                                   - FAZ(kx,ky,kz)*TwoPi*(kx/Lx)
-                                   *   cos(TwoPi*kx*x/Lx+FPZX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPZY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPZZ(kx,ky,kz)) );
-
-                             f3 += xT *
-                                 ( FAY(kx,ky,kz)*TwoPi*(kx/Lx)
-                                   *   cos(TwoPi*kx*x/Lx+FPYX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPYY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPYZ(kx,ky,kz))
-                                   - FAX(kx,ky,kz)*TwoPi*(ky/Ly)
-                                   *   sin(TwoPi*kx*x/Lx+FPXX(kx,ky,kz))
-                                   *   cos(TwoPi*ky*y/Ly+FPXY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPXZ(kx,ky,kz)) );
-                     }
-                 }
-             }
-         }
-
-         //
-         // For high aspect ratio domain, add more modes to break symmetry at a low level.
-         // We assume Lz is longer, Lx = Ly.
-         //
-         for ( int kz = 1; kz <= zstep-1; kz++) {
-             for ( int ky = TurbulentForcing::mode_start; ky <= TurbulentForcing::nmodes*ystep; ky++) {
-                 for ( int kx = TurbulentForcing::mode_start; kx <= TurbulentForcing::nmodes*xstep; kx++)
-                 {
-                     Real kappa = sqrt( (kx*kx)/(Lx*Lx) + (ky*ky)/(Ly*Ly) + (kz*kz)/(Lz*Lz) );
-
-                     if (kappa <= kappaMax)
-                     {
-                         Real xT = cos(FTX(kx,ky,kz)*forcetime + TAT(kx,ky,kz));
-
-                             f1 += xT *
-                                 ( FAZ(kx,ky,kz)*TwoPi*(ky/Ly)
-                                   *   sin(TwoPi*kx*x/Lx+FPZX(kx,ky,kz))
-                                   *   cos(TwoPi*ky*y/Ly+FPZY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPZZ(kx,ky,kz))
-                                   - FAY(kx,ky,kz)*TwoPi*(kz/Lz)
-                                   *   sin(TwoPi*kx*x/Lx+FPYX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPYY(kx,ky,kz))
-                                   *   cos(TwoPi*kz*z/Lz+FPYZ(kx,ky,kz)) );
-
-                             f2 += xT *
-                                 ( FAX(kx,ky,kz)*TwoPi*(kz/Lz)
-                                   *   sin(TwoPi*kx*x/Lx+FPXX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPXY(kx,ky,kz))
-                                   *   cos(TwoPi*kz*z/Lz+FPXZ(kx,ky,kz))
-                                   - FAZ(kx,ky,kz)*TwoPi*(kx/Lx)
-                                   *   cos(TwoPi*kx*x/Lx+FPZX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPZY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPZZ(kx,ky,kz)) );
-
-                             f3 += xT *
-                                 ( FAY(kx,ky,kz)*TwoPi*(kx/Lx)
-                                   *   cos(TwoPi*kx*x/Lx+FPYX(kx,ky,kz))
-                                   *   sin(TwoPi*ky*y/Ly+FPYY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPYZ(kx,ky,kz))
-                                   - FAX(kx,ky,kz)*TwoPi*(ky/Ly)
-                                   *   sin(TwoPi*kx*x/Lx+FPXX(kx,ky,kz))
-                                   *   cos(TwoPi*ky*y/Ly+FPXY(kx,ky,kz))
-                                   *   sin(TwoPi*kz*z/Lz+FPXZ(kx,ky,kz)) );
-                     }
-                 }
-             }
-         }
-
-         frc(i,j,k,0) += dens(i,j,k,0) * f1;
-         frc(i,j,k,1) += dens(i,j,k,0) * f2;
-         frc(i,j,k,2) += dens(i,j,k,0) * f3;
-
-         // if ( i==0 && j==0 && k==0 ){
-         //   printf("(0,0,0) : %15.13e %15.13e %15.13e\n",
-         //          f1, f2, f3);
-         // }
-         // if ( i==16 && j==16 && k==16 ){
-         //   printf("(16,16,16) : %15.13e %15.13e %15.13e\n",
-         //          f1, f2, f3);
-         // }
-         // if ( i==25 && j==12 && k==3 ){
-         //   printf("(25,12,3) : %15.13e %15.13e %15.13e\n",
-         //          f1, f2, f3);
-         // }
-
-     });
-#endif // if 0
-
+} // namespace pele::physics::turbforcing
